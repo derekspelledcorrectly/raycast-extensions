@@ -1,22 +1,52 @@
-import { Action, ActionPanel, Color, Icon, Image, List, Toast, getPreferenceValues, showToast } from "@raycast/api";
-import { useEffect, useMemo, useState } from "react";
+import { Action, ActionPanel, Color, Icon, Image, List, Toast, showToast } from "@raycast/api";
+import { useCallback, useEffect, useMemo, useState } from "react";
+import { useAccounts } from "./accounts";
 import { MaskedEmail, MaskedEmailState, updateMaskedEmailState, retrieveAllMaskedEmails } from "./fastmail";
-
-type Preferences = {
-  api_token: string;
-};
 
 type MaskedEmailStateFilter = MaskedEmailState | "";
 
 export default function Command() {
-  const { api_token } = getPreferenceValues<Preferences>();
+  const { accounts, selectedAccount, selectAccount, isLoading: accountsLoading } = useAccounts();
   const [maskedEmails, setMaskedEmails] = useState<MaskedEmail[]>([]);
   const [filter, setFilter] = useState<MaskedEmailStateFilter>("");
+  const [emailsLoading, setEmailsLoading] = useState(false);
+
+  const loadEmails = useCallback(async (token: string) => {
+    setEmailsLoading(true);
+    try {
+      const emails = await retrieveAllMaskedEmails(token);
+      setMaskedEmails(emails);
+    } catch (error) {
+      await showToast({
+        style: Toast.Style.Failure,
+        title: "Failed to load masked emails",
+        message: error instanceof Error ? error.message : "Check your account token and try again.",
+      });
+      setMaskedEmails([]);
+    } finally {
+      setEmailsLoading(false);
+    }
+  }, []);
+
+  useEffect(() => {
+    if (selectedAccount) {
+      loadEmails(selectedAccount.token);
+    }
+  }, [selectedAccount, loadEmails]);
+
+  const handleDropdownChange = (value: string) => {
+    if (value.startsWith("account:")) {
+      selectAccount(value.slice("account:".length));
+      setFilter("");
+    } else if (value.startsWith("state:")) {
+      setFilter(value.slice("state:".length) as MaskedEmailStateFilter);
+    }
+  };
 
   const updateMaskedEmail = async (email: MaskedEmail, state: MaskedEmailState) => {
-    await updateMaskedEmailState(api_token, email, state);
-
-    setMaskedEmails(maskedEmails.map((e) => (e.id === email.id ? { ...e, state } : e)));
+    if (!selectedAccount) throw new Error("No account selected");
+    await updateMaskedEmailState(selectedAccount.token, email, state);
+    setMaskedEmails((prev) => prev.map((e) => (e.id === email.id ? { ...e, state } : e)));
   };
 
   const toggleMaskedEmail = async (email: MaskedEmail) => {
@@ -77,16 +107,6 @@ export default function Command() {
     }
   };
 
-  useEffect(() => {
-    const listMaskedEmails = async () => {
-      const emails = await retrieveAllMaskedEmails(api_token);
-
-      setMaskedEmails(emails);
-    };
-
-    listMaskedEmails().catch(console.error);
-  }, [api_token]);
-
   const filteredSortedMaskedEmails = useMemo(() => {
     const sortOrder: { [key in MaskedEmailState]: number } = {
       [MaskedEmailState.Deleted]: 0,
@@ -107,21 +127,43 @@ export default function Command() {
       .sort((lhs, rhs) => sortOrder[rhs.state] - sortOrder[lhs.state]);
   }, [maskedEmails, filter]);
 
+  if (!accountsLoading && accounts.length === 0) {
+    return (
+      <List>
+        <List.EmptyView
+          title="No Accounts Configured"
+          description='Use the "Manage Fastmail Accounts" command to add an account'
+        />
+      </List>
+    );
+  }
+
   return (
     <List
-      isLoading={maskedEmails.length <= 0}
+      isLoading={accountsLoading || emailsLoading}
       searchBarAccessory={
         <List.Dropdown
-          tooltip="Select Masked Email State"
-          onChange={(value) => {
-            setFilter(value as MaskedEmailStateFilter);
-          }}
+          tooltip="Filter"
+          onChange={handleDropdownChange}
         >
-          <List.Dropdown.Item title="All" value={""} />
-          <List.Dropdown.Item title="Active" value={MaskedEmailState.Enabled} />
-          <List.Dropdown.Item title="Blocked" value={MaskedEmailState.Disabled} />
-          <List.Dropdown.Item title="Pending" value={MaskedEmailState.Pending} />
-          <List.Dropdown.Item title="Deleted" value={MaskedEmailState.Deleted} />
+          {accounts.length > 1 && (
+            <List.Dropdown.Section title="Account">
+              {accounts.map((account) => (
+                <List.Dropdown.Item
+                  key={account.id}
+                  title={account.name}
+                  value={`account:${account.id}`}
+                />
+              ))}
+            </List.Dropdown.Section>
+          )}
+          <List.Dropdown.Section title="State">
+            <List.Dropdown.Item title="All" value="state:" />
+            <List.Dropdown.Item title="Active" value={`state:${MaskedEmailState.Enabled}`} />
+            <List.Dropdown.Item title="Blocked" value={`state:${MaskedEmailState.Disabled}`} />
+            <List.Dropdown.Item title="Pending" value={`state:${MaskedEmailState.Pending}`} />
+            <List.Dropdown.Item title="Deleted" value={`state:${MaskedEmailState.Deleted}`} />
+          </List.Dropdown.Section>
         </List.Dropdown>
       }
     >

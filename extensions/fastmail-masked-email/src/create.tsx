@@ -2,6 +2,7 @@ import {
   Action,
   ActionPanel,
   Clipboard,
+  Detail,
   Form,
   Icon,
   PopToRootType,
@@ -12,14 +13,15 @@ import {
   showToast,
 } from "@raycast/api";
 import { useState } from "react";
+import { useAccounts } from "./accounts";
 import { createMaskedEmail } from "./fastmail";
 
 type Preferences = {
-  api_token: string;
   create_prefix: string;
 };
 
 type FormValues = {
+  account?: string;
   prefix: string;
   description: string;
   domain: string;
@@ -27,13 +29,26 @@ type FormValues = {
 
 export default function Command() {
   const [maskedEmail, setMaskedEmail] = useState<string>("");
-  const { api_token, create_prefix } = getPreferenceValues<Preferences>();
+  const { accounts, selectedAccount, selectAccount, isLoading } = useAccounts();
+  const { create_prefix } = getPreferenceValues<Preferences>();
 
-  const handleSubmit = async ({ prefix, description, domain }: FormValues) => {
+  if (!isLoading && accounts.length === 0) {
+    return (
+      <Detail markdown='No Fastmail accounts configured. Use the **"Manage Fastmail Accounts"** command to add one.' />
+    );
+  }
+
+  const handleSubmit = async ({ account, prefix, description, domain }: FormValues) => {
+    const token = accounts.find((a) => a.id === account)?.token ?? selectedAccount?.token;
+    if (!token) {
+      await showToast({ style: Toast.Style.Failure, title: "No account selected" });
+      return;
+    }
+
     const toast = await showToast({ style: Toast.Style.Animated, title: "Creating masked email..." });
 
     try {
-      const email = await createMaskedEmail(api_token, prefix, description, domain);
+      const email = await createMaskedEmail(token, prefix, description, domain);
 
       Clipboard.copy(email);
 
@@ -50,11 +65,17 @@ export default function Command() {
     }
   };
 
-  const handleSubmitInteractive = async ({ prefix, description, domain }: FormValues) => {
+  const handleSubmitInteractive = async ({ account, prefix, description, domain }: FormValues) => {
+    const token = accounts.find((a) => a.id === account)?.token ?? selectedAccount?.token;
+    if (!token) {
+      await showToast({ style: Toast.Style.Failure, title: "No account selected" });
+      return;
+    }
+
     const toast = await showToast({ style: Toast.Style.Animated, title: "Creating masked email..." });
 
     try {
-      const email = await createMaskedEmail(api_token, prefix, description, domain);
+      const email = await createMaskedEmail(token, prefix, description, domain);
 
       setMaskedEmail(email);
 
@@ -75,6 +96,7 @@ export default function Command() {
 
   return (
     <Form
+      isLoading={isLoading}
       actions={
         <ActionPanel>
           <Action.SubmitForm title="Create Masked Email" icon={Icon.EyeDisabled} onSubmit={handleSubmit} />
@@ -86,6 +108,18 @@ export default function Command() {
         </ActionPanel>
       }
     >
+      {accounts.length > 1 && (
+        <Form.Dropdown
+          id="account"
+          title="Account"
+          defaultValue={selectedAccount?.id}
+          onChange={selectAccount}
+        >
+          {accounts.map((account) => (
+            <Form.Dropdown.Item key={account.id} title={account.name} value={account.id} />
+          ))}
+        </Form.Dropdown>
+      )}
       <Form.TextField
         id="prefix"
         title="Prefix (Optional)"

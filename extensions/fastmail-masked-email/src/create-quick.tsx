@@ -7,19 +7,29 @@ import {
   showHUD,
   showToast,
 } from "@raycast/api";
+import { getDefaultAccount } from "./accounts";
 import { createMaskedEmail } from "./fastmail";
 
 type Preferences = {
-  api_token: string;
   create_prefix: string;
 };
 
 export default async function Command() {
-  const { api_token, create_prefix } = getPreferenceValues<Preferences>();
+  const account = await getDefaultAccount();
+  if (!account) {
+    await showToast({
+      style: Toast.Style.Failure,
+      title: "No Fastmail accounts configured",
+      message: "Use 'Manage Fastmail Accounts' to add one.",
+    });
+    return;
+  }
+
+  const { create_prefix } = getPreferenceValues<Preferences>();
   const toast = await showToast({ style: Toast.Style.Animated, title: "Creating masked email..." });
 
   try {
-    const email = await createMaskedEmail(api_token, create_prefix);
+    const email = await createMaskedEmail(account.token, create_prefix);
 
     Clipboard.copy(email);
     await showHUD("🎉 Masked email copied to clipboard");
