@@ -10,6 +10,12 @@ type TaggedMaskedEmail = MaskedEmail & { accountId: string; accountName: string 
 const ACCOUNT_SHORTCUT_KEYS = ["1", "2", "3", "4", "5", "6", "7", "8", "9"] as const;
 const ALL_ACCOUNTS = "all";
 
+// Avoid the state-tag colors (Blue/Green/Orange/Red) so account tags stay visually distinct.
+const ACCOUNT_COLORS = [Color.Purple, Color.Yellow, Color.Magenta] as const;
+
+const colorForAccountIndex = (index: number): Color =>
+  ACCOUNT_COLORS[((index % ACCOUNT_COLORS.length) + ACCOUNT_COLORS.length) % ACCOUNT_COLORS.length];
+
 export default function Command() {
   const { accounts, selectedAccount, selectAccount, isLoading: accountsLoading } = useAccounts();
   const [maskedEmails, setMaskedEmails] = useState<TaggedMaskedEmail[]>([]);
@@ -250,7 +256,11 @@ export default function Command() {
 
         const accessories: List.Item.Accessory[] = [];
         if (allAccountsMode && accounts.length > 1) {
-          accessories.push({ tag: { value: email.accountName, color: Color.Blue }, tooltip: null });
+          const accountIndex = accounts.findIndex((a) => a.id === email.accountId);
+          accessories.push({
+            tag: { value: email.accountName, color: colorForAccountIndex(accountIndex) },
+            tooltip: null,
+          });
         }
         accessories.push({
           date: new Date(email.createdAt),
