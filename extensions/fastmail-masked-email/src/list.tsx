@@ -6,6 +6,7 @@ import { getToken } from "./token-store";
 
 type MaskedEmailStateFilter = MaskedEmailState | "";
 type TaggedMaskedEmail = MaskedEmail & { accountId: string; accountName: string };
+type FailedAccount = { id: string; name: string; reason: string };
 
 const ACCOUNT_SHORTCUT_KEYS = ["1", "2", "3", "4", "5", "6", "7", "8", "9"] as const;
 const ALL_ACCOUNTS = "all";
@@ -16,9 +17,13 @@ const ACCOUNT_COLORS = [Color.Purple, Color.Yellow, Color.Magenta] as const;
 const colorForAccountIndex = (index: number): Color =>
   ACCOUNT_COLORS[((index % ACCOUNT_COLORS.length) + ACCOUNT_COLORS.length) % ACCOUNT_COLORS.length];
 
+const describeReason = (reason: unknown): string =>
+  reason instanceof Error ? reason.message : typeof reason === "string" ? reason : "Unknown error";
+
 export default function Command() {
   const { accounts, selectedAccount, selectAccount, isLoading: accountsLoading } = useAccounts();
   const [maskedEmails, setMaskedEmails] = useState<TaggedMaskedEmail[]>([]);
+  const [failedAccounts, setFailedAccounts] = useState<FailedAccount[]>([]);
   const [filter, setFilter] = useState<MaskedEmailStateFilter>("");
   const [allAccountsMode, setAllAccountsMode] = useState(false);
   const [emailsLoading, setEmailsLoading] = useState(false);
@@ -36,20 +41,23 @@ export default function Command() {
       try {
         const results = await Promise.allSettled(activeAccounts.map(loadEmailsForAccount));
         const combined: TaggedMaskedEmail[] = [];
-        const failed: string[] = [];
+        const failed: FailedAccount[] = [];
         results.forEach((result, i) => {
+          const account = activeAccounts[i];
           if (result.status === "fulfilled") {
             combined.push(...result.value);
           } else {
-            failed.push(activeAccounts[i].name);
+            console.error(`Failed to load masked emails for account "${account.name}"`, result.reason);
+            failed.push({ id: account.id, name: account.name, reason: describeReason(result.reason) });
           }
         });
         setMaskedEmails(combined);
+        setFailedAccounts(failed);
         if (failed.length > 0) {
           await showToast({
             style: Toast.Style.Failure,
-            title: `Failed to load ${failed.length} account${failed.length > 1 ? "s" : ""}`,
-            message: failed.join(", "),
+            title: `Failed to load ${failed.length} of ${activeAccounts.length} account${activeAccounts.length > 1 ? "s" : ""}`,
+            message: failed.map((f) => f.name).join(", "),
           });
         }
       } finally {
@@ -62,10 +70,12 @@ export default function Command() {
   const loadSingleAccount = useCallback(
     async (account: Account) => {
       setEmailsLoading(true);
+      setFailedAccounts([]);
       try {
         const tagged = await loadEmailsForAccount(account);
         setMaskedEmails(tagged);
       } catch (error) {
+        console.error(`Failed to load masked emails for account "${account.name}"`, error);
         await showToast({
           style: Toast.Style.Failure,
           title: "Failed to load masked emails",
@@ -77,6 +87,29 @@ export default function Command() {
       }
     },
     [loadEmailsForAccount],
+  );
+
+  const retryAccount = useCallback(
+    async (accountId: string) => {
+      const account = accounts.find((a) => a.id === accountId);
+      if (!account) return;
+      const toast = await showToast({ style: Toast.Style.Animated, title: `Retrying ${account.name}...` });
+      try {
+        const tagged = await loadEmailsForAccount(account);
+        setMaskedEmails((prev) => [...prev.filter((e) => e.accountId !== account.id), ...tagged]);
+        setFailedAccounts((prev) => prev.filter((f) => f.id !== account.id));
+        toast.style = Toast.Style.Success;
+        toast.title = `Loaded ${account.name}`;
+      } catch (error) {
+        console.error(`Retry failed for account "${account.name}"`, error);
+        const reason = describeReason(error);
+        setFailedAccounts((prev) => prev.map((f) => (f.id === account.id ? { ...f, reason } : f)));
+        toast.style = Toast.Style.Failure;
+        toast.title = `Still failing: ${account.name}`;
+        toast.message = reason;
+      }
+    },
+    [accounts, loadEmailsForAccount],
   );
 
   // Stable content-based key so the fetch effect only re-runs when the set of
@@ -249,6 +282,36 @@ export default function Command() {
         </List.Dropdown>
       }
     >
+      {allAccountsMode && failedAccounts.length > 0 && (
+        <List.Section
+          title="Failed to Load"
+          subtitle={`${failedAccounts.length} of ${accounts.length} account${accounts.length > 1 ? "s" : ""}`}
+        >
+          {failedAccounts.map((failed) => (
+            <List.Item
+              key={`failed:${failed.id}`}
+              icon={{ source: Icon.ExclamationMark, tintColor: Color.Red }}
+              title={failed.name}
+              subtitle={failed.reason}
+              accessories={[{ tag: { value: "Failed", color: Color.Red }, tooltip: null }]}
+              actions={
+                <ActionPanel title={`${failed.name} — failed to load`}>
+                  <Action
+                    icon={Icon.RotateClockwise}
+                    title="Retry This Account"
+                    onAction={() => retryAccount(failed.id)}
+                  />
+                  <Action
+                    icon={Icon.Repeat}
+                    title="Retry All Accounts"
+                    onAction={() => loadAllAccounts(accounts)}
+                  />
+                </ActionPanel>
+              }
+            />
+          ))}
+        </List.Section>
+      )}
       {filteredSortedMaskedEmails.map((email) => {
         const canBlockUnblock = [MaskedEmailState.Enabled, MaskedEmailState.Disabled].includes(email.state);
         const canRestore = email.state === MaskedEmailState.Deleted;
