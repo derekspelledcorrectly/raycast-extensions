@@ -15,6 +15,7 @@ import {
 import { useState } from "react";
 import { useAccounts } from "./accounts";
 import { createMaskedEmail } from "./fastmail";
+import { getToken } from "./token-store";
 
 type Preferences = {
   create_prefix: string;
@@ -38,8 +39,14 @@ export default function Command() {
     );
   }
 
+  const resolveToken = async (accountId: string | undefined): Promise<string | undefined> => {
+    const id = accountId ?? selectedAccount?.id;
+    if (!id) return undefined;
+    return getToken(id);
+  };
+
   const handleSubmit = async ({ account, prefix, description, domain }: FormValues) => {
-    const token = accounts.find((a) => a.id === account)?.token ?? selectedAccount?.token;
+    const token = await resolveToken(account);
     if (!token) {
       await showToast({ style: Toast.Style.Failure, title: "No account selected" });
       return;
@@ -66,7 +73,7 @@ export default function Command() {
   };
 
   const handleSubmitInteractive = async ({ account, prefix, description, domain }: FormValues) => {
-    const token = accounts.find((a) => a.id === account)?.token ?? selectedAccount?.token;
+    const token = await resolveToken(account);
     if (!token) {
       await showToast({ style: Toast.Style.Failure, title: "No account selected" });
       return;

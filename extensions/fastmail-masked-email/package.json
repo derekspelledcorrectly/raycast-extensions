@@ -47,10 +47,10 @@
   ],
   "preferences": [
     {
-      "description": "Legacy single-account token (migrated automatically). Use 'Manage Fastmail Accounts' instead.",
+      "description": "Legacy single-account token. On first run it is migrated into account storage and managed via 'Manage Fastmail Accounts'.",
       "name": "api_token",
       "required": false,
-      "title": "Fastmail API Token (Migration)",
+      "title": "Fastmail API Token (Legacy)",
       "type": "password"
     },
     {

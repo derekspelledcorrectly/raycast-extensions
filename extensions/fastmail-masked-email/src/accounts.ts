@@ -2,24 +2,27 @@ import { LocalStorage, getPreferenceValues, showToast, Toast } from "@raycast/ap
 import { useCallback, useEffect, useState } from "react";
 import { randomUUID } from "crypto";
 import { AuthenticationError, clearSession, getSession } from "./api";
+import { deleteToken, getToken, setToken } from "./token-store";
 
 const ACCOUNTS_KEY = "accounts";
 
 export type Account = {
   id: string;
   name: string;
-  token: string;
   isDefault: boolean;
 };
+
+// Account blob shape from before tokens moved to their own keys. Tokens used to
+// live in the same JSON blob as metadata; token-store now owns them.
+type LegacyAccount = Account & { token?: string };
 
 export async function getAccounts(): Promise<Account[]> {
   const raw = await LocalStorage.getItem<string>(ACCOUNTS_KEY);
   if (!raw) return [];
+  let parsed: LegacyAccount[];
   try {
-    return JSON.parse(raw) as Account[];
+    parsed = JSON.parse(raw) as LegacyAccount[];
   } catch (error) {
-    // Preserve the unparseable blob under a timestamped key so the user can
-    // recover their tokens via LocalStorage inspection rather than losing them.
     const backupKey = `${ACCOUNTS_KEY}.corrupt.${Date.now()}`;
     console.error(`Corrupt account data in LocalStorage; preserved as ${backupKey}`, error);
     await LocalStorage.setItem(backupKey, raw);
@@ -31,6 +34,38 @@ export async function getAccounts(): Promise<Account[]> {
     });
     return [];
   }
+  return migrateLegacyTokens(parsed);
+}
+
+// Idempotent: if no entry has a `token` field, just strip and return.
+// Otherwise, write each token to token-store, drop it from the JSON blob,
+// and persist the cleaned shape so subsequent reads short-circuit.
+async function migrateLegacyTokens(parsed: LegacyAccount[]): Promise<Account[]> {
+  const stripMetadata = (a: LegacyAccount): Account => ({ id: a.id, name: a.name, isDefault: a.isDefault });
+  if (!parsed.some((a) => typeof a.token === "string")) {
+    return parsed.map(stripMetadata);
+  }
+
+  for (const account of parsed) {
+    if (typeof account.token === "string") {
+      try {
+        await setToken(account.id, account.token);
+      } catch (error) {
+        console.error(`Failed to migrate token for account "${account.name}"`, error);
+        await showToast({
+          style: Toast.Style.Failure,
+          title: "Could not migrate account tokens",
+          message: "Open Manage Fastmail Accounts to re-enter affected tokens.",
+        });
+        // Leave the legacy blob untouched so a later attempt can retry.
+        return parsed.map(stripMetadata);
+      }
+    }
+  }
+
+  const cleaned = parsed.map(stripMetadata);
+  await saveAccounts(cleaned);
+  return cleaned;
 }
 
 async function saveAccounts(accounts: Account[]): Promise<void> {
@@ -42,25 +77,30 @@ export async function addAccount(name: string, token: string): Promise<Account> 
   const account: Account = {
     id: randomUUID(),
     name,
-    token,
     isDefault: accounts.length === 0,
   };
+  await setToken(account.id, token);
   accounts.push(account);
   await saveAccounts(accounts);
   return account;
 }
 
-export async function updateAccount(id: string, updates: Partial<Pick<Account, "name" | "token">>): Promise<void> {
+export async function updateAccountName(id: string, name: string): Promise<void> {
   const accounts = await getAccounts();
   const index = accounts.findIndex((a) => a.id === id);
   if (index === -1) throw new Error(`Account ${id} not found`);
-
-  if (updates.token && updates.token !== accounts[index].token) {
-    clearSession(accounts[index].token);
-  }
-
-  accounts[index] = { ...accounts[index], ...updates };
+  accounts[index] = { ...accounts[index], name };
   await saveAccounts(accounts);
+}
+
+export async function updateAccountToken(id: string, token: string): Promise<void> {
+  const accounts = await getAccounts();
+  if (!accounts.some((a) => a.id === id)) {
+    throw new Error(`Account ${id} not found`);
+  }
+  const previous = await getToken(id);
+  if (previous !== undefined) clearSession(previous);
+  await setToken(id, token);
 }
 
 export async function removeAccount(id: string): Promise<void> {
@@ -69,7 +109,9 @@ export async function removeAccount(id: string): Promise<void> {
   if (index === -1) return;
 
   const removed = accounts[index];
-  clearSession(removed.token);
+  const removedToken = await getToken(id);
+  if (removedToken) clearSession(removedToken);
+  await deleteToken(id);
   accounts.splice(index, 1);
 
   if (removed.isDefault && accounts.length > 0) {
@@ -91,7 +133,6 @@ export async function migrateIfNeeded(): Promise<void> {
   } catch (error) {
     if (error instanceof AuthenticationError) {
       // Token is definitively bad; skip migration so we don't persist a dead token.
-      // The user configured this token before, so nothing to warn about here.
       console.error("Migration: legacy token is invalid, skipping", error);
       return;
     }

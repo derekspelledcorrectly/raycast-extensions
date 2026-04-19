@@ -2,6 +2,7 @@ import { Action, ActionPanel, Color, Icon, Image, List, Toast, showToast } from 
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { useAccounts } from "./accounts";
 import { MaskedEmail, MaskedEmailState, updateMaskedEmailState, retrieveAllMaskedEmails } from "./fastmail";
+import { getToken } from "./token-store";
 
 type MaskedEmailStateFilter = MaskedEmailState | "";
 
@@ -11,9 +12,11 @@ export default function Command() {
   const [filter, setFilter] = useState<MaskedEmailStateFilter>("");
   const [emailsLoading, setEmailsLoading] = useState(false);
 
-  const loadEmails = useCallback(async (token: string) => {
+  const loadEmails = useCallback(async (accountId: string) => {
     setEmailsLoading(true);
     try {
+      const token = await getToken(accountId);
+      if (!token) throw new Error("No token available for this account.");
       const emails = await retrieveAllMaskedEmails(token);
       setMaskedEmails(emails);
     } catch (error) {
@@ -30,7 +33,7 @@ export default function Command() {
 
   useEffect(() => {
     if (selectedAccount) {
-      loadEmails(selectedAccount.token);
+      loadEmails(selectedAccount.id);
     }
   }, [selectedAccount, loadEmails]);
 
@@ -45,7 +48,9 @@ export default function Command() {
 
   const updateMaskedEmail = async (email: MaskedEmail, state: MaskedEmailState) => {
     if (!selectedAccount) throw new Error("No account selected");
-    await updateMaskedEmailState(selectedAccount.token, email, state);
+    const token = await getToken(selectedAccount.id);
+    if (!token) throw new Error("No token available for the selected account.");
+    await updateMaskedEmailState(token, email, state);
     setMaskedEmails((prev) => prev.map((e) => (e.id === email.id ? { ...e, state } : e)));
   };
 

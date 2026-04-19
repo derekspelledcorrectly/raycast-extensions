@@ -9,6 +9,7 @@ import {
 } from "@raycast/api";
 import { getDefaultAccount } from "./accounts";
 import { createMaskedEmail } from "./fastmail";
+import { getToken } from "./token-store";
 
 type Preferences = {
   create_prefix: string;
@@ -25,11 +26,21 @@ export default async function Command() {
     return;
   }
 
+  const token = await getToken(account.id);
+  if (!token) {
+    await showToast({
+      style: Toast.Style.Failure,
+      title: `No token stored for "${account.name}"`,
+      message: "Use 'Manage Fastmail Accounts' to re-add it.",
+    });
+    return;
+  }
+
   const { create_prefix } = getPreferenceValues<Preferences>();
   const toast = await showToast({ style: Toast.Style.Animated, title: "Creating masked email..." });
 
   try {
-    const email = await createMaskedEmail(account.token, create_prefix);
+    const email = await createMaskedEmail(token, create_prefix);
 
     Clipboard.copy(email);
     await showHUD("🎉 Masked email copied to clipboard");

@@ -12,8 +12,17 @@ import {
   useNavigation,
 } from "@raycast/api";
 import { useCallback, useEffect, useState } from "react";
-import { type Account, addAccount, getAccounts, removeAccount, setDefaultAccount, updateAccount } from "./accounts";
-import { getSession, type Session } from "./api";
+import {
+  type Account,
+  addAccount,
+  getAccounts,
+  removeAccount,
+  setDefaultAccount,
+  updateAccountName,
+  updateAccountToken,
+} from "./accounts";
+import { AuthenticationError, getSession, type Session } from "./api";
+import { getToken } from "./token-store";
 
 type AccountWithSession = Account & { sessionEmail?: string; sessionError?: boolean };
 
@@ -29,9 +38,10 @@ export default function Command() {
       const withSessions = await Promise.all(
         loaded.map(async (account) => {
           try {
-            const session = await getSession(account.token);
-            const email = deriveEmail(session);
-            return { ...account, sessionEmail: email };
+            const token = await getToken(account.id);
+            if (!token) return { ...account, sessionError: true };
+            const session = await getSession(token);
+            return { ...account, sessionEmail: deriveEmail(session) };
           } catch {
             return { ...account, sessionError: true };
           }
@@ -105,7 +115,7 @@ export default function Command() {
             key={account.id}
             icon={account.isDefault ? { source: Icon.Star, tintColor: Color.Yellow } : Icon.Person}
             title={account.name}
-            subtitle={account.sessionError ? "Invalid token" : account.sessionEmail}
+            subtitle={account.sessionError ? "Invalid or missing token" : account.sessionEmail}
             accessories={account.isDefault ? [{ tag: { value: "Default", color: Color.Blue } }] : []}
             actions={
               <ActionPanel>
@@ -114,17 +124,9 @@ export default function Command() {
                   icon={Icon.Pencil}
                   target={<AccountForm account={account} onSave={loadAccounts} />}
                 />
-                <Action.Push
-                  title="Add Account"
-                  icon={Icon.Plus}
-                  target={<AccountForm onSave={loadAccounts} />}
-                />
+                <Action.Push title="Add Account" icon={Icon.Plus} target={<AccountForm onSave={loadAccounts} />} />
                 {!account.isDefault && (
-                  <Action
-                    title="Set as Default"
-                    icon={Icon.Star}
-                    onAction={() => handleSetDefault(account)}
-                  />
+                  <Action title="Set as Default" icon={Icon.Star} onAction={() => handleSetDefault(account)} />
                 )}
                 <Action
                   title="Remove Account"
@@ -148,31 +150,50 @@ function deriveEmail(session: Session): string | undefined {
 
 function AccountForm({ account, onSave }: { account?: Account; onSave: () => Promise<void> }) {
   const { pop } = useNavigation();
+  const isEdit = account !== undefined;
 
   const handleSubmit = async (values: { name: string; token: string }) => {
-    if (!values.name.trim() || !values.token.trim()) {
-      await showToast({ style: Toast.Style.Failure, title: "Name and token are required" });
+    const name = values.name.trim();
+    const token = values.token.trim();
+
+    if (!name) {
+      await showToast({ style: Toast.Style.Failure, title: "Name is required" });
+      return;
+    }
+    if (!isEdit && !token) {
+      await showToast({ style: Toast.Style.Failure, title: "API token is required" });
       return;
     }
 
-    const toast = await showToast({ style: Toast.Style.Animated, title: "Validating token..." });
+    const toast = await showToast({
+      style: Toast.Style.Animated,
+      title: token ? "Validating token..." : "Saving...",
+    });
 
-    try {
-      await getSession(values.token.trim());
-    } catch {
-      toast.style = Toast.Style.Failure;
-      toast.title = "Invalid API token";
-      toast.message = "Could not authenticate with Fastmail. Check your token.";
-      return;
+    if (token) {
+      try {
+        await getSession(token);
+      } catch (error) {
+        toast.style = Toast.Style.Failure;
+        if (error instanceof AuthenticationError) {
+          toast.title = "Invalid API token";
+          toast.message = "Could not authenticate with Fastmail. Check your token.";
+        } else {
+          toast.title = "Could not validate token";
+          toast.message = error instanceof Error ? error.message : "Network error.";
+        }
+        return;
+      }
     }
 
     try {
-      if (account) {
-        await updateAccount(account.id, { name: values.name.trim(), token: values.token.trim() });
+      if (isEdit) {
+        if (name !== account.name) await updateAccountName(account.id, name);
+        if (token) await updateAccountToken(account.id, token);
         toast.style = Toast.Style.Success;
         toast.title = "Account updated";
       } else {
-        await addAccount(values.name.trim(), values.token.trim());
+        await addAccount(name, token);
         toast.style = Toast.Style.Success;
         toast.title = "Account added";
       }
@@ -189,16 +210,15 @@ function AccountForm({ account, onSave }: { account?: Account; onSave: () => Pro
     <Form
       actions={
         <ActionPanel>
-          <Action.SubmitForm title={account ? "Update Account" : "Add Account"} onSubmit={handleSubmit} />
+          <Action.SubmitForm title={isEdit ? "Save Changes" : "Add Account"} onSubmit={handleSubmit} />
         </ActionPanel>
       }
     >
       <Form.TextField id="name" title="Account Name" placeholder="e.g., Personal, Work" defaultValue={account?.name} />
       <Form.PasswordField
         id="token"
-        title="API Token"
-        placeholder="Enter your Fastmail API token"
-        defaultValue={account?.token}
+        title={isEdit ? "API Token" : "API Token"}
+        placeholder={isEdit ? "Enter a new token to rotate (leave blank to keep current)" : "Enter your Fastmail API token"}
       />
     </Form>
   );
