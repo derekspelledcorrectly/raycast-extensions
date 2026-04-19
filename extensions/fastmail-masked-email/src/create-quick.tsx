@@ -10,15 +10,16 @@ import {
 import { createMaskedEmail } from "./fastmail";
 
 type Preferences = {
+  api_token: string;
   create_prefix: string;
 };
 
 export default async function Command() {
-  const { create_prefix } = getPreferenceValues<Preferences>();
+  const { api_token, create_prefix } = getPreferenceValues<Preferences>();
   const toast = await showToast({ style: Toast.Style.Animated, title: "Creating masked email..." });
 
   try {
-    const email = await createMaskedEmail(create_prefix);
+    const email = await createMaskedEmail(api_token, create_prefix);
 
     Clipboard.copy(email);
     await showHUD("🎉 Masked email copied to clipboard");

@@ -1,15 +1,20 @@
-import { Action, ActionPanel, Color, Icon, Image, List, Toast, showToast } from "@raycast/api";
+import { Action, ActionPanel, Color, Icon, Image, List, Toast, getPreferenceValues, showToast } from "@raycast/api";
 import { useEffect, useMemo, useState } from "react";
 import { MaskedEmail, MaskedEmailState, updateMaskedEmailState, retrieveAllMaskedEmails } from "./fastmail";
+
+type Preferences = {
+  api_token: string;
+};
 
 type MaskedEmailStateFilter = MaskedEmailState | "";
 
 export default function Command() {
+  const { api_token } = getPreferenceValues<Preferences>();
   const [maskedEmails, setMaskedEmails] = useState<MaskedEmail[]>([]);
   const [filter, setFilter] = useState<MaskedEmailStateFilter>("");
 
   const updateMaskedEmail = async (email: MaskedEmail, state: MaskedEmailState) => {
-    await updateMaskedEmailState(email, state);
+    await updateMaskedEmailState(api_token, email, state);
 
     setMaskedEmails(maskedEmails.map((e) => (e.id === email.id ? { ...e, state } : e)));
   };
@@ -74,13 +79,13 @@ export default function Command() {
 
   useEffect(() => {
     const listMaskedEmails = async () => {
-      const emails = await retrieveAllMaskedEmails();
+      const emails = await retrieveAllMaskedEmails(api_token);
 
       setMaskedEmails(emails);
     };
 
     listMaskedEmails().catch(console.error);
-  }, []);
+  }, [api_token]);
 
   const filteredSortedMaskedEmails = useMemo(() => {
     const sortOrder: { [key in MaskedEmailState]: number } = {

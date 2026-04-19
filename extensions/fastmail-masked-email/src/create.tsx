@@ -15,6 +15,7 @@ import { useState } from "react";
 import { createMaskedEmail } from "./fastmail";
 
 type Preferences = {
+  api_token: string;
   create_prefix: string;
 };
 
@@ -26,13 +27,13 @@ type FormValues = {
 
 export default function Command() {
   const [maskedEmail, setMaskedEmail] = useState<string>("");
-  const { create_prefix } = getPreferenceValues<Preferences>();
+  const { api_token, create_prefix } = getPreferenceValues<Preferences>();
 
   const handleSubmit = async ({ prefix, description, domain }: FormValues) => {
     const toast = await showToast({ style: Toast.Style.Animated, title: "Creating masked email..." });
 
     try {
-      const email = await createMaskedEmail(prefix, description, domain);
+      const email = await createMaskedEmail(api_token, prefix, description, domain);
 
       Clipboard.copy(email);
 
@@ -53,7 +54,7 @@ export default function Command() {
     const toast = await showToast({ style: Toast.Style.Animated, title: "Creating masked email..." });
 
     try {
-      const email = await createMaskedEmail(prefix, description, domain);
+      const email = await createMaskedEmail(api_token, prefix, description, domain);
 
       setMaskedEmail(email);
 
