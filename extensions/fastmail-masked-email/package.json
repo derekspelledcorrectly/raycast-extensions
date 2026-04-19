@@ -36,14 +36,21 @@
       "subtitle": "Fastmail",
       "description": "Quickly create a new masked email",
       "mode": "no-view"
+    },
+    {
+      "name": "manage-accounts",
+      "title": "Manage Fastmail Accounts",
+      "subtitle": "Fastmail",
+      "description": "Add, edit, and remove Fastmail accounts",
+      "mode": "view"
     }
   ],
   "preferences": [
     {
-      "description": "Enter your Fastmail API token",
+      "description": "Legacy single-account token (migrated automatically). Use 'Manage Fastmail Accounts' instead.",
       "name": "api_token",
-      "required": true,
-      "title": "Fastmail API Token",
+      "required": false,
+      "title": "Fastmail API Token (Migration)",
       "type": "password"
     },
     {

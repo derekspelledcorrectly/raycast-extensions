@@ -7,6 +7,15 @@ type Session = {
   primaryAccounts: Record<string, string>;
 };
 
+// Thrown only on a confirmed 401 from Fastmail — callers can treat this as
+// "this token is definitively bad" and distinguish it from transient network errors.
+export class AuthenticationError extends Error {
+  constructor(message = "Failed to authenticate, please check your API token") {
+    super(message);
+    this.name = "AuthenticationError";
+  }
+}
+
 function getHeaders(token: string) {
   return {
     Authorization: `Bearer ${token}`,
@@ -24,11 +33,10 @@ async function getSession(token: string): Promise<Session> {
   const headers = getHeaders(token);
   const response = await fetch("https://api.fastmail.com/jmap/session", { headers });
   if (!response.ok) {
-    throw new Error(
-      response.status === 401
-        ? "Failed to authenticate, please check your API token"
-        : `Fastmail API error: ${response.status} ${response.statusText}`,
-    );
+    if (response.status === 401) {
+      throw new AuthenticationError();
+    }
+    throw new Error(`Fastmail API error: ${response.status} ${response.statusText}`);
   }
   const session = (await response.json()) as Session;
   if (!session.apiUrl || !session.primaryAccounts) {
