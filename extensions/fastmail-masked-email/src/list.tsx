@@ -1,60 +1,129 @@
 import { Action, ActionPanel, Color, Icon, Image, List, Toast, showToast } from "@raycast/api";
 import { useCallback, useEffect, useMemo, useState } from "react";
-import { useAccounts } from "./accounts";
+import { Account, useAccounts } from "./accounts";
 import { MaskedEmail, MaskedEmailState, updateMaskedEmailState, retrieveAllMaskedEmails } from "./fastmail";
 import { getToken } from "./token-store";
 
 type MaskedEmailStateFilter = MaskedEmailState | "";
+type TaggedMaskedEmail = MaskedEmail & { accountId: string; accountName: string };
+
+const ACCOUNT_SHORTCUT_KEYS = ["1", "2", "3", "4", "5", "6", "7", "8", "9"] as const;
+const ALL_ACCOUNTS = "all";
 
 export default function Command() {
   const { accounts, selectedAccount, selectAccount, isLoading: accountsLoading } = useAccounts();
-  const [maskedEmails, setMaskedEmails] = useState<MaskedEmail[]>([]);
+  const [maskedEmails, setMaskedEmails] = useState<TaggedMaskedEmail[]>([]);
   const [filter, setFilter] = useState<MaskedEmailStateFilter>("");
+  const [allAccountsMode, setAllAccountsMode] = useState(false);
   const [emailsLoading, setEmailsLoading] = useState(false);
 
-  const loadEmails = useCallback(async (accountId: string) => {
-    setEmailsLoading(true);
-    try {
-      const token = await getToken(accountId);
-      if (!token) throw new Error("No token available for this account.");
-      const emails = await retrieveAllMaskedEmails(token);
-      setMaskedEmails(emails);
-    } catch (error) {
-      await showToast({
-        style: Toast.Style.Failure,
-        title: "Failed to load masked emails",
-        message: error instanceof Error ? error.message : "Check your account token and try again.",
-      });
-      setMaskedEmails([]);
-    } finally {
-      setEmailsLoading(false);
-    }
+  const loadEmailsForAccount = useCallback(async (account: Account): Promise<TaggedMaskedEmail[]> => {
+    const token = await getToken(account.id);
+    if (!token) throw new Error(`No token stored for "${account.name}"`);
+    const emails = await retrieveAllMaskedEmails(token);
+    return emails.map((e) => ({ ...e, accountId: account.id, accountName: account.name }));
   }, []);
 
+  const loadAllAccounts = useCallback(
+    async (activeAccounts: Account[]) => {
+      setEmailsLoading(true);
+      try {
+        const results = await Promise.allSettled(activeAccounts.map(loadEmailsForAccount));
+        const combined: TaggedMaskedEmail[] = [];
+        const failed: string[] = [];
+        results.forEach((result, i) => {
+          if (result.status === "fulfilled") {
+            combined.push(...result.value);
+          } else {
+            failed.push(activeAccounts[i].name);
+          }
+        });
+        setMaskedEmails(combined);
+        if (failed.length > 0) {
+          await showToast({
+            style: Toast.Style.Failure,
+            title: `Failed to load ${failed.length} account${failed.length > 1 ? "s" : ""}`,
+            message: failed.join(", "),
+          });
+        }
+      } finally {
+        setEmailsLoading(false);
+      }
+    },
+    [loadEmailsForAccount],
+  );
+
+  const loadSingleAccount = useCallback(
+    async (account: Account) => {
+      setEmailsLoading(true);
+      try {
+        const tagged = await loadEmailsForAccount(account);
+        setMaskedEmails(tagged);
+      } catch (error) {
+        await showToast({
+          style: Toast.Style.Failure,
+          title: "Failed to load masked emails",
+          message: error instanceof Error ? error.message : "Check your account token and try again.",
+        });
+        setMaskedEmails([]);
+      } finally {
+        setEmailsLoading(false);
+      }
+    },
+    [loadEmailsForAccount],
+  );
+
+  // Stable content-based key so the fetch effect only re-runs when the set of
+  // accounts actually changes, not whenever useAccounts returns a fresh array
+  // reference. Tokens live in token-store and aren't surfaced through the
+  // metadata; rotations happen out-of-band via Manage Fastmail Accounts.
+  const accountsKey = useMemo(() => accounts.map((a) => a.id).join(","), [accounts]);
+
   useEffect(() => {
-    if (selectedAccount) {
-      loadEmails(selectedAccount.id);
+    if (allAccountsMode) {
+      if (accounts.length > 0) loadAllAccounts(accounts);
+    } else if (selectedAccount) {
+      loadSingleAccount(selectedAccount);
     }
-  }, [selectedAccount, loadEmails]);
+    // `accounts` is intentionally omitted; accountsKey drives content-sensitive reloads.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [allAccountsMode, selectedAccount, accountsKey, loadAllAccounts, loadSingleAccount]);
 
   const handleDropdownChange = (value: string) => {
-    if (value.startsWith("account:")) {
-      selectAccount(value.slice("account:".length));
-      setFilter("");
+    if (value === `account:${ALL_ACCOUNTS}`) {
+      switchToAllAccounts();
+    } else if (value.startsWith("account:")) {
+      switchToAccount(value.slice("account:".length));
     } else if (value.startsWith("state:")) {
       setFilter(value.slice("state:".length) as MaskedEmailStateFilter);
     }
   };
 
-  const updateMaskedEmail = async (email: MaskedEmail, state: MaskedEmailState) => {
-    if (!selectedAccount) throw new Error("No account selected");
-    const token = await getToken(selectedAccount.id);
-    if (!token) throw new Error("No token available for the selected account.");
-    await updateMaskedEmailState(token, email, state);
-    setMaskedEmails((prev) => prev.map((e) => (e.id === email.id ? { ...e, state } : e)));
+  const switchToAccount = (id: string) => {
+    if (!allAccountsMode && selectedAccount?.id === id) return;
+    setAllAccountsMode(false);
+    selectAccount(id);
+    setFilter("");
   };
 
-  const toggleMaskedEmail = async (email: MaskedEmail) => {
+  const switchToAllAccounts = () => {
+    if (allAccountsMode) return;
+    setAllAccountsMode(true);
+    setFilter("");
+  };
+
+  const updateMaskedEmail = async (email: TaggedMaskedEmail, state: MaskedEmailState) => {
+    const account = accounts.find((a) => a.id === email.accountId);
+    if (!account) throw new Error(`Account for masked email ${email.email} no longer available`);
+    const token = await getToken(account.id);
+    if (!token) throw new Error(`No token stored for "${account.name}"`);
+    await updateMaskedEmailState(token, email, state);
+    setMaskedEmails((prev) =>
+      prev.map((e) => (e.id === email.id && e.accountId === email.accountId ? { ...e, state } : e)),
+    );
+  };
+
+  const toggleMaskedEmail = async (email: TaggedMaskedEmail) => {
     const state = email.state === MaskedEmailState.Enabled ? MaskedEmailState.Disabled : MaskedEmailState.Enabled;
     const toast = await showToast({
       style: Toast.Style.Animated,
@@ -76,7 +145,7 @@ export default function Command() {
     }
   };
 
-  const deleteMaskedEmail = async (email: MaskedEmail) => {
+  const deleteMaskedEmail = async (email: TaggedMaskedEmail) => {
     const toast = await showToast({ style: Toast.Style.Animated, title: "Deleting masked email..." });
 
     try {
@@ -94,7 +163,7 @@ export default function Command() {
     }
   };
 
-  const restoreMaskedEmail = async (email: MaskedEmail) => {
+  const restoreMaskedEmail = async (email: TaggedMaskedEmail) => {
     const toast = await showToast({ style: Toast.Style.Animated, title: "Restoring masked email..." });
 
     try {
@@ -143,22 +212,24 @@ export default function Command() {
     );
   }
 
+  const dropdownValue = allAccountsMode
+    ? `account:${ALL_ACCOUNTS}`
+    : filter !== ""
+      ? `state:${filter}`
+      : selectedAccount
+        ? `account:${selectedAccount.id}`
+        : undefined;
+
   return (
     <List
       isLoading={accountsLoading || emailsLoading}
       searchBarAccessory={
-        <List.Dropdown
-          tooltip="Filter"
-          onChange={handleDropdownChange}
-        >
+        <List.Dropdown tooltip="Filter" value={dropdownValue} onChange={handleDropdownChange}>
           {accounts.length > 1 && (
             <List.Dropdown.Section title="Account">
+              <List.Dropdown.Item title="All Accounts" value={`account:${ALL_ACCOUNTS}`} />
               {accounts.map((account) => (
-                <List.Dropdown.Item
-                  key={account.id}
-                  title={account.name}
-                  value={`account:${account.id}`}
-                />
+                <List.Dropdown.Item key={account.id} title={account.name} value={`account:${account.id}`} />
               ))}
             </List.Dropdown.Section>
           )}
@@ -177,17 +248,24 @@ export default function Command() {
         const canRestore = email.state === MaskedEmailState.Deleted;
         const canView = email.state !== MaskedEmailState.Pending;
 
+        const accessories: List.Item.Accessory[] = [];
+        if (allAccountsMode && accounts.length > 1) {
+          accessories.push({ tag: { value: email.accountName, color: Color.Blue }, tooltip: null });
+        }
+        accessories.push({
+          date: new Date(email.createdAt),
+          tooltip: `Created ${new Date(email.createdAt).toLocaleString()}`,
+        });
+        accessories.push(accessoryForMaskedEmail(email));
+
         return (
           <List.Item
             icon={iconForMaskedEmail(email)}
-            key={email.id}
+            key={`${email.accountId}:${email.id}`}
             title={email.email}
             subtitle={email.forDomain || email.description}
-            keywords={[email.description, email.forDomain]}
-            accessories={[
-              { date: new Date(email.createdAt), tooltip: `Created ${new Date(email.createdAt).toLocaleString()}` },
-              accessoryForMaskedEmail(email),
-            ]}
+            keywords={[email.description, email.forDomain, email.accountName]}
+            accessories={accessories}
             actions={
               <ActionPanel title={email.email}>
                 <Action.CopyToClipboard title="Copy Masked Email" content={email.email} />
@@ -209,6 +287,25 @@ export default function Command() {
                     title="View in Fastmail"
                     url={`https://app.fastmail.com/settings/masked/${email.id}`}
                   />
+                )}
+                {accounts.length > 1 && (
+                  <ActionPanel.Section title="Switch Account">
+                    <Action
+                      icon={Icon.Globe}
+                      title={`Show All Accounts${allAccountsMode ? " (current)" : ""}`}
+                      shortcut={{ modifiers: ["cmd"], key: "0" }}
+                      onAction={switchToAllAccounts}
+                    />
+                    {accounts.slice(0, ACCOUNT_SHORTCUT_KEYS.length).map((account, index) => (
+                      <Action
+                        key={account.id}
+                        icon={Icon.Person}
+                        title={`Show ${account.name}${!allAccountsMode && account.id === selectedAccount?.id ? " (current)" : ""}`}
+                        shortcut={{ modifiers: ["cmd"], key: ACCOUNT_SHORTCUT_KEYS[index] }}
+                        onAction={() => switchToAccount(account.id)}
+                      />
+                    ))}
+                  </ActionPanel.Section>
                 )}
               </ActionPanel>
             }
