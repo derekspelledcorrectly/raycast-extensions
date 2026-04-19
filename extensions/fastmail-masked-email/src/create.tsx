@@ -22,11 +22,12 @@ type Preferences = {
 };
 
 type FormValues = {
-  account?: string;
   prefix: string;
   description: string;
   domain: string;
 };
+
+const ACCOUNT_SHORTCUT_KEYS = ["1", "2", "3", "4", "5", "6", "7", "8", "9"] as const;
 
 export default function Command() {
   const [maskedEmail, setMaskedEmail] = useState<string>("");
@@ -39,14 +40,8 @@ export default function Command() {
     );
   }
 
-  const resolveToken = async (accountId: string | undefined): Promise<string | undefined> => {
-    const id = accountId ?? selectedAccount?.id;
-    if (!id) return undefined;
-    return getToken(id);
-  };
-
-  const handleSubmit = async ({ account, prefix, description, domain }: FormValues) => {
-    const token = await resolveToken(account);
+  const handleSubmit = async ({ prefix, description, domain }: FormValues) => {
+    const token = selectedAccount ? await getToken(selectedAccount.id) : undefined;
     if (!token) {
       await showToast({ style: Toast.Style.Failure, title: "No account selected" });
       return;
@@ -72,8 +67,8 @@ export default function Command() {
     }
   };
 
-  const handleSubmitInteractive = async ({ account, prefix, description, domain }: FormValues) => {
-    const token = await resolveToken(account);
+  const handleSubmitInteractive = async ({ prefix, description, domain }: FormValues) => {
+    const token = selectedAccount ? await getToken(selectedAccount.id) : undefined;
     if (!token) {
       await showToast({ style: Toast.Style.Failure, title: "No account selected" });
       return;
@@ -112,15 +107,29 @@ export default function Command() {
             icon={Icon.EyeDisabled}
             onSubmit={handleSubmitInteractive}
           />
+          {accounts.length > 1 && (
+            <ActionPanel.Section title="Switch Account">
+              {accounts.slice(0, ACCOUNT_SHORTCUT_KEYS.length).map((account, index) => (
+                <Action
+                  key={account.id}
+                  icon={Icon.Person}
+                  title={`Use ${account.name}${account.id === selectedAccount?.id ? " (current)" : ""}`}
+                  shortcut={{ modifiers: ["cmd"], key: ACCOUNT_SHORTCUT_KEYS[index] }}
+                  onAction={() => selectAccount(account.id)}
+                />
+              ))}
+            </ActionPanel.Section>
+          )}
         </ActionPanel>
       }
     >
-      {accounts.length > 1 && (
+      {accounts.length > 1 && selectedAccount && (
         <Form.Dropdown
           id="account"
           title="Account"
-          defaultValue={selectedAccount?.id}
+          value={selectedAccount.id}
           onChange={selectAccount}
+          info="Press ⌘1, ⌘2, etc. to quickly switch accounts"
         >
           {accounts.map((account) => (
             <Form.Dropdown.Item key={account.id} title={account.name} value={account.id} />
