@@ -125,7 +125,6 @@ export default function Command() {
       loadSingleAccount(selectedAccount);
     }
     // `accounts` is intentionally omitted; accountsKey drives content-sensitive reloads.
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [allAccountsMode, selectedAccount, accountsKey, loadAllAccounts, loadSingleAccount]);
 
   const handleDropdownChange = (value: string) => {
@@ -301,11 +300,7 @@ export default function Command() {
                     title="Retry This Account"
                     onAction={() => retryAccount(failed.id)}
                   />
-                  <Action
-                    icon={Icon.Repeat}
-                    title="Retry All Accounts"
-                    onAction={() => loadAllAccounts(accounts)}
-                  />
+                  <Action icon={Icon.Repeat} title="Retry All Accounts" onAction={() => loadAllAccounts(accounts)} />
                 </ActionPanel>
               }
             />

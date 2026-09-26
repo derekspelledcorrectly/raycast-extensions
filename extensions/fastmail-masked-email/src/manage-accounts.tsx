@@ -218,7 +218,9 @@ function AccountForm({ account, onSave }: { account?: Account; onSave: () => Pro
       <Form.PasswordField
         id="token"
         title={isEdit ? "API Token" : "API Token"}
-        placeholder={isEdit ? "Enter a new token to rotate (leave blank to keep current)" : "Enter your Fastmail API token"}
+        placeholder={
+          isEdit ? "Enter a new token to rotate (leave blank to keep current)" : "Enter your Fastmail API token"
+        }
       />
     </Form>
   );
